@@ -1,0 +1,293 @@
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+}
+
+provider "aws" {
+  region = var.region
+}
+
+# Latest Ubuntu 24.04 LTS (amd64), resolved per-region.
+data "aws_ami" "ubuntu" {
+  most_recent = true
+  owners      = ["099720109477"] # Canonical
+
+  filter {
+    name   = "name"
+    values = ["ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-*"]
+  }
+
+  filter {
+    name   = "virtualization-type"
+    values = ["hvm"]
+  }
+}
+
+# Single SG for the whole cluster. The self rule carries all intra-cluster
+# traffic (PD 2379/2380, TiKV 20160/20180, TiDB 4000/10080, TiCDC 8300,
+# monitoring 9090/9100/3000, HAProxy -> TiDB). Only SSH, the load-balanced
+# MySQL port, and Grafana are exposed to the admin CIDR.
+resource "aws_security_group" "tidb" {
+  name        = "tidb-cluster-prod"
+  description = "TiDB production cluster"
+  vpc_id      = var.vpc_id
+
+  ingress {
+    description = "intra-cluster"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    self        = true
+  }
+
+  ingress {
+    description = "SSH"
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = [var.admin_cidr]
+  }
+
+  ingress {
+    description = "MySQL via HAProxy / TiDB"
+    from_port   = 4000
+    to_port     = 4000
+    protocol    = "tcp"
+    cidr_blocks = [var.admin_cidr]
+  }
+
+  ingress {
+    description = "Grafana"
+    from_port   = 3000
+    to_port     = 3000
+    protocol    = "tcp"
+    cidr_blocks = [var.admin_cidr]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+locals {
+  common = {
+    key_name                    = var.key_name
+    subnet_id                   = var.subnet_id
+    vpc_security_group_ids      = [aws_security_group.tidb.id]
+    associate_public_ip_address = var.associate_public_ip
+  }
+}
+
+# Control machine: runs TiUP and hosts the monitoring stack.
+resource "aws_instance" "controller" {
+  ami                         = data.aws_ami.ubuntu.id
+  instance_type               = var.controller_instance_type
+  key_name                    = local.common.key_name
+  subnet_id                   = local.common.subnet_id
+  vpc_security_group_ids      = local.common.vpc_security_group_ids
+  associate_public_ip_address = local.common.associate_public_ip_address
+
+  root_block_device {
+    volume_size = 30
+    volume_type = "gp3"
+  }
+
+  tags = { Name = "db-tidb-controller" }
+}
+
+# TiDB SQL nodes, with PD colocated on the same hosts.
+resource "aws_instance" "tidb" {
+  count                       = 3
+  ami                         = data.aws_ami.ubuntu.id
+  instance_type               = var.tidb_instance_type
+  key_name                    = local.common.key_name
+  subnet_id                   = local.common.subnet_id
+  vpc_security_group_ids      = local.common.vpc_security_group_ids
+  associate_public_ip_address = local.common.associate_public_ip_address
+
+  root_block_device {
+    volume_size = 50
+    volume_type = "gp3"
+  }
+
+  tags = { Name = format("db-tidb-%02d", count.index + 1) }
+}
+
+# TiKV nodes on g4dn. The local NVMe instance store is formatted and mounted
+# at /data1 by cloud-init; TiKV's data_dir points there. The store is
+# EPHEMERAL: stopping/terminating an instance loses its data, so durability
+# relies on TiKV's 3x replication across these three nodes.
+resource "aws_instance" "tikv" {
+  count                       = 3
+  ami                         = data.aws_ami.ubuntu.id
+  instance_type               = var.tikv_instance_type
+  key_name                    = local.common.key_name
+  subnet_id                   = local.common.subnet_id
+  vpc_security_group_ids      = local.common.vpc_security_group_ids
+  associate_public_ip_address = local.common.associate_public_ip_address
+
+  root_block_device {
+    volume_size = 50
+    volume_type = "gp3"
+  }
+
+  user_data = <<-EOF
+    #!/bin/bash
+    set -e
+    # Identify the instance-store NVMe (root EBS is excluded by the model match).
+    DEV=$(lsblk -dpno NAME,MODEL | grep -i 'Instance Storage' | awk '{print $1}' | head -n1)
+    if [ -n "$DEV" ]; then
+      if ! blkid "$DEV" >/dev/null 2>&1; then mkfs.ext4 -F "$DEV"; fi
+      mkdir -p /data1
+      mountpoint -q /data1 || mount "$DEV" /data1
+      UUID=$(blkid -s UUID -o value "$DEV")
+      grep -q "$UUID" /etc/fstab || echo "UUID=$UUID /data1 ext4 defaults,nofail 0 2" >> /etc/fstab
+      mkdir -p /data1/tikv-data
+      chown -R ubuntu:ubuntu /data1
+    fi
+  EOF
+
+  tags = { Name = format("db-tikv-%02d", count.index + 1) }
+}
+
+# TiCDC. c5 has no local store, so the sort/staging dir lives on a larger
+# EBS root volume.
+resource "aws_instance" "ticdc" {
+  count                       = 1
+  ami                         = data.aws_ami.ubuntu.id
+  instance_type               = var.ticdc_instance_type
+  key_name                    = local.common.key_name
+  subnet_id                   = local.common.subnet_id
+  vpc_security_group_ids      = local.common.vpc_security_group_ids
+  associate_public_ip_address = local.common.associate_public_ip_address
+
+  root_block_device {
+    volume_size = 100
+    volume_type = "gp3"
+  }
+
+  tags = { Name = "db-ticdc-01" }
+}
+
+# HAProxy load balancer in front of the TiDB SQL nodes.
+resource "aws_instance" "proxy" {
+  count                       = 1
+  ami                         = data.aws_ami.ubuntu.id
+  instance_type               = var.proxy_instance_type
+  key_name                    = local.common.key_name
+  subnet_id                   = local.common.subnet_id
+  vpc_security_group_ids      = local.common.vpc_security_group_ids
+  associate_public_ip_address = local.common.associate_public_ip_address
+
+  root_block_device {
+    volume_size = 20
+    volume_type = "gp3"
+  }
+
+  tags = { Name = "db-proxy-01" }
+}
+
+# Deploy + start TiDB via TiUP from the controller. The controller SSHes to
+# every node over private IPs (allowed by the SG self rule).
+resource "null_resource" "deploy" {
+  depends_on = [
+    aws_instance.tidb,
+    aws_instance.tikv,
+    aws_instance.ticdc,
+    aws_instance.controller,
+  ]
+
+  # Re-run the deploy if any cluster member is replaced.
+  triggers = {
+    instances = join(",", concat(
+      aws_instance.tidb[*].id,
+      aws_instance.tikv[*].id,
+      aws_instance.ticdc[*].id,
+    ))
+  }
+
+  connection {
+    type        = "ssh"
+    host        = aws_instance.controller.public_ip
+    user        = "ubuntu"
+    private_key = file(pathexpand(var.ssh_private_key))
+    timeout     = "5m"
+  }
+
+  # Key the controller uses to reach every other node.
+  provisioner "file" {
+    source      = pathexpand(var.ssh_private_key)
+    destination = "/home/ubuntu/.ssh/tidb-key"
+  }
+
+  provisioner "file" {
+    content = templatefile("${path.module}/topology.yaml.tpl", {
+      pd_ips     = aws_instance.tidb[*].private_ip # PD colocated on TiDB nodes
+      tidb_ips   = aws_instance.tidb[*].private_ip
+      tikv_ips   = aws_instance.tikv[*].private_ip
+      cdc_ips    = aws_instance.ticdc[*].private_ip
+      monitor_ip = aws_instance.controller.private_ip
+    })
+    destination = "/home/ubuntu/topology.yaml"
+  }
+
+  provisioner "remote-exec" {
+    inline = [
+      "set -e",
+      "chmod 600 /home/ubuntu/.ssh/tidb-key",
+      # Wait until every TiKV node has its NVMe mounted at /data1 before deploy.
+      "for ip in ${join(" ", aws_instance.tikv[*].private_ip)}; do",
+      "  echo \"waiting for /data1 on $ip\";",
+      "  until ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -i /home/ubuntu/.ssh/tidb-key ubuntu@$ip mountpoint -q /data1; do sleep 5; done;",
+      "done",
+      "if ! test -x /home/ubuntu/.tiup/bin/tiup; then curl --proto '=https' --tlsv1.2 -sSf https://tiup-mirrors.pingcap.com/install.sh | sh; fi",
+      "export PATH=$PATH:/home/ubuntu/.tiup/bin",
+      "tiup cluster deploy tidb-prod ${var.tidb_version} /home/ubuntu/topology.yaml -u ubuntu -i /home/ubuntu/.ssh/tidb-key --yes",
+      "tiup cluster start tidb-prod",
+      "tiup cluster display tidb-prod",
+    ]
+  }
+}
+
+# Install and configure HAProxy on db-proxy-01, pointing at the TiDB nodes.
+resource "null_resource" "proxy_setup" {
+  depends_on = [null_resource.deploy]
+
+  triggers = {
+    tidb_ips = join(",", aws_instance.tidb[*].private_ip)
+    proxy_id = aws_instance.proxy[0].id
+  }
+
+  connection {
+    type        = "ssh"
+    host        = aws_instance.proxy[0].public_ip
+    user        = "ubuntu"
+    private_key = file(pathexpand(var.ssh_private_key))
+    timeout     = "5m"
+  }
+
+  provisioner "file" {
+    content = templatefile("${path.module}/haproxy.cfg.tpl", {
+      tidb_ips = aws_instance.tidb[*].private_ip
+    })
+    destination = "/tmp/haproxy.cfg"
+  }
+
+  provisioner "remote-exec" {
+    inline = [
+      "set -e",
+      "sudo apt-get update -y",
+      "sudo DEBIAN_FRONTEND=noninteractive apt-get install -y haproxy",
+      "sudo mv /tmp/haproxy.cfg /etc/haproxy/haproxy.cfg",
+      "sudo systemctl enable haproxy",
+      "sudo systemctl restart haproxy",
+    ]
+  }
+}

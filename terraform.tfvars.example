@@ -1,0 +1,12 @@
+# Copy to terraform.tfvars and fill in. Do not commit terraform.tfvars.
+
+vpc_id    = "vpc-xxxxxxxx"           # existing VPC
+subnet_id = "subnet-xxxxxxxx"        # subnet in ap-southeast-1a
+
+key_name        = "my-aws-keypair"   # name of the EC2 key pair
+ssh_private_key = "~/.ssh/id_ed25519" # local private key matching it
+
+admin_cidr = "203.0.113.10/32"       # your public IP /32 (SSH, :4000, Grafana)
+
+# region, tidb_version, instance types, and associate_public_ip all have
+# sensible defaults in variables.tf — override here only if needed.

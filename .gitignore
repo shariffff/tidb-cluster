@@ -1,0 +1,12 @@
+# Terraform state and secrets must never be committed.
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+
+# Local variable files hold secrets/IDs; keep only the example.
+*.tfvars
+!*.tfvars.example
+
+# .terraform.lock.hcl is intentionally tracked (it pins provider versions).
