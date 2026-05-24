@@ -2,7 +2,6 @@
 
 Terraform for a real TiDB cluster on AWS (`ap-southeast-1a`).
 
-## TL;DR
 
 ```bash
 cp terraform.tfvars.example terraform.tfvars   # set vpc_id, subnet_id, key_name, admin_cidr
