@@ -5,6 +5,7 @@ Terraform for a real TiDB cluster. One `apply` builds the instances, mounts TiKV
 ```bash
 cp terraform.tfvars.example terraform.tfvars   # vpc_id, subnet_id, key_name, admin_cidr
 terraform init                                 # first run only
+terraform plan                                 # review: expect create-only
 terraform apply                                # ~10-15 min
 terraform output connect                       # mysql command via HAProxy
 ```
