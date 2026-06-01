@@ -102,9 +102,11 @@ resource "aws_instance" "controller" {
   tags = { Name = "db-tidb-controller" }
 }
 
-# TiDB SQL nodes, with PD colocated on the same hosts.
+# TiDB SQL nodes. PD is colocated on the FIRST THREE of these hosts only
+# (see the pd_ips slice in null_resource.deploy), so tidb_count can grow past 3
+# without changing PD quorum.
 resource "aws_instance" "tidb" {
-  count                       = 3
+  count                       = var.tidb_count
   ami                         = data.aws_ami.ubuntu.id
   instance_type               = var.tidb_instance_type
   key_name                    = local.common.key_name
@@ -125,7 +127,7 @@ resource "aws_instance" "tidb" {
 # EPHEMERAL: stopping/terminating an instance loses its data, so durability
 # relies on TiKV's 3x replication across these three nodes.
 resource "aws_instance" "tikv" {
-  count                       = 3
+  count                       = var.tikv_count
   ami                         = data.aws_ami.ubuntu.id
   instance_type               = var.tikv_instance_type
   key_name                    = local.common.key_name
@@ -227,9 +229,11 @@ resource "null_resource" "deploy" {
     destination = "/home/ubuntu/.ssh/tidb-key"
   }
 
+  # Full desired topology. Used only for the very first deploy; PD is pinned to
+  # the first three TiDB hosts so growing tidb_count never adds PD members.
   provisioner "file" {
     content = templatefile("${path.module}/topology.yaml.tpl", {
-      pd_ips     = aws_instance.tidb[*].private_ip # PD colocated on TiDB nodes
+      pd_ips     = slice(aws_instance.tidb[*].private_ip, 0, 3)
       tidb_ips   = aws_instance.tidb[*].private_ip
       tikv_ips   = aws_instance.tikv[*].private_ip
       cdc_ips    = aws_instance.ticdc[*].private_ip
@@ -238,20 +242,25 @@ resource "null_resource" "deploy" {
     destination = "/home/ubuntu/topology.yaml"
   }
 
+  # Idempotent deploy/scale-out script. First run deploys; every later run
+  # diffs the desired node set against the live cluster and scales out the new
+  # TiDB/TiKV/TiCDC nodes online. PD is never scaled here.
+  provisioner "file" {
+    content = templatefile("${path.module}/scale.sh.tpl", {
+      tidb_version = var.tidb_version
+      tidb_ips     = aws_instance.tidb[*].private_ip
+      tikv_ips     = aws_instance.tikv[*].private_ip
+      cdc_ips      = aws_instance.ticdc[*].private_ip
+    })
+    destination = "/home/ubuntu/scale.sh"
+  }
+
   provisioner "remote-exec" {
     inline = [
       "set -e",
       "chmod 600 /home/ubuntu/.ssh/tidb-key",
-      # Wait until every TiKV node has its NVMe mounted at /data1 before deploy.
-      "for ip in ${join(" ", aws_instance.tikv[*].private_ip)}; do",
-      "  echo \"waiting for /data1 on $ip\";",
-      "  until ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -i /home/ubuntu/.ssh/tidb-key ubuntu@$ip mountpoint -q /data1; do sleep 5; done;",
-      "done",
-      "if ! test -x /home/ubuntu/.tiup/bin/tiup; then curl --proto '=https' --tlsv1.2 -sSf https://tiup-mirrors.pingcap.com/install.sh | sh; fi",
-      "export PATH=$PATH:/home/ubuntu/.tiup/bin",
-      "tiup cluster deploy tidb-prod ${var.tidb_version} /home/ubuntu/topology.yaml -u ubuntu -i /home/ubuntu/.ssh/tidb-key --yes",
-      "tiup cluster start tidb-prod",
-      "tiup cluster display tidb-prod",
+      "chmod +x /home/ubuntu/scale.sh",
+      "bash /home/ubuntu/scale.sh",
     ]
   }
 }
@@ -286,8 +295,16 @@ resource "null_resource" "proxy_setup" {
       "sudo apt-get update -y",
       "sudo DEBIAN_FRONTEND=noninteractive apt-get install -y haproxy",
       "sudo mv /tmp/haproxy.cfg /etc/haproxy/haproxy.cfg",
+      # Raise the fd limit so HAProxy can honor maxconn (needs ~2x for
+      # client+server sockets). LimitNOFILE only takes effect on a full
+      # restart, so restart when this override is new/changed; otherwise a
+      # hitless reload is enough to pick up backend (scale-out) changes.
+      "sudo mkdir -p /etc/systemd/system/haproxy.service.d",
+      "printf '[Service]\\nLimitNOFILE=1048576\\n' | sudo tee /tmp/haproxy-limits.conf >/dev/null",
+      "OVERRIDE=/etc/systemd/system/haproxy.service.d/limits.conf",
+      "if sudo cmp -s /tmp/haproxy-limits.conf \"$OVERRIDE\"; then NEED_RESTART=0; else sudo mv /tmp/haproxy-limits.conf \"$OVERRIDE\"; sudo systemctl daemon-reload; NEED_RESTART=1; fi",
       "sudo systemctl enable haproxy",
-      "sudo systemctl restart haproxy",
+      "if [ \"$NEED_RESTART\" = 1 ]; then sudo systemctl restart haproxy; else sudo systemctl reload haproxy || sudo systemctl restart haproxy; fi",
     ]
   }
 }

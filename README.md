@@ -1,43 +1,42 @@
-# TiDB production cluster (ap-southeast-1a)
+# TiDB cluster on AWS (ap-south-1a)
 
-Terraform for a real TiDB cluster on AWS (`ap-southeast-1a`).
-
+Terraform for a real TiDB cluster. One `apply` builds the instances, mounts TiKV NVMe, runs TiUP deploy+start, and configures HAProxy.
 
 ```bash
-cp terraform.tfvars.example terraform.tfvars   # set vpc_id, subnet_id, key_name, admin_cidr
-terraform plan                                 # expect: create only, 0 to destroy
+cp terraform.tfvars.example terraform.tfvars   # vpc_id, subnet_id, key_name, admin_cidr
+terraform init                                 # first run only
 terraform apply                                # ~10-15 min
 terraform output connect                       # mysql command via HAProxy
 ```
 
-Prereqs: AWS creds active (`aws sts get-caller-identity` works), an existing
-EC2 key pair in `ap-southeast-1` with its private key on this machine, and a
-subnet in `ap-southeast-1a`. `terraform init` is only needed the first time.
-
-One `apply` does everything: instances → NVMe format/mount on TiKV → TiUP
-deploy+start → HAProxy install/config. Nothing is set up by hand. Heads-up:
-the 3× g4dn GPU instances can fail at apply if your account's G-instance
-vCPU quota is too low — check that before applying.
+Needs: active AWS creds, an EC2 key pair in `ap-south-1` (+ local private key), a subnet in `ap-south-1a`. Check your **G-instance vCPU quota** first — the 3× g4dn fail without it.
 
 ## Topology
 
 | Instance | Type | Role |
 |---|---|---|
-| db-tidb-controller | t2.medium | TiUP control machine + monitoring (Prometheus/Grafana/AlertManager) |
-| db-tidb-01/02/03 | c5.4xlarge | TiDB server + PD (colocated) |
-| db-tikv-01/02/03 | g4dn.4xlarge | TiKV — data on local NVMe `/data1` |
+| db-tidb-controller | t2.medium | TiUP control + monitoring (Prometheus/Grafana/Alertmanager) |
+| db-tidb-01..N | c5.4xlarge | TiDB + PD (PD on first 3 only) |
+| db-tikv-01..N | g4dn.4xlarge | TiKV — data on local NVMe `/data1` |
 | db-ticdc-01 | c5.2xlarge | TiCDC |
-| db-proxy-01 | c5.xlarge | HAProxy load balancer for client `:4000` |
+| db-proxy-01 | c5.xlarge | HAProxy `:4000` (maxconn 100k) |
 
-## Notes / caveats
+## Scaling (online, no downtime)
 
-- **TiKV data is on ephemeral NVMe.** Stopping or terminating a TiKV
-  instance loses its local data; durability relies on TiKV's 3x
-  replication. Don't stop all TiKV nodes at once.
-- **PD is colocated with TiDB** on the three c5.4xlarge nodes.
-- `associate_public_ip = true` by default so nodes can install TiUP/HAProxy.
-  For a hardened setup, use a private subnet with a NAT gateway and set it
-  to `false` (the controller and proxy still need a public IP or a bastion
-  for the Terraform provisioners to reach them).
-- HAProxy stats UI is on `:8404` (not exposed externally; reach it via an
-  SSH tunnel through the proxy node).
+```bash
+terraform apply -var tidb_count=5    # more concurrent users / SQL capacity
+terraform apply -var tikv_count=5    # more storage throughput
+```
+
+Re-apply does an online `tiup scale-out` of new nodes only. PD stays pinned to the first 3 TiDB nodes; both counts floor at 3. Scale-*out* only — to remove a node, `tiup cluster scale-in` it first.
+
+## Monitoring
+
+- **Grafana:** `terraform output grafana` (admin/admin)
+- **HAProxy stats:** `:8404` (SSH-tunnel via the proxy node)
+
+## Caveats
+
+- **TiKV data is on ephemeral NVMe** — losing a node loses its local data; durability relies on 3x replication. Never stop all TiKV nodes at once.
+- **Single HAProxy is a SPOF and funnel.** All client traffic flows through one c5.xlarge proxy with no redundancy or failover. It's the weakest link for high concurrency — add a second proxy (or front it with an NLB) before pushing serious load.
+- **`associate_public_ip = true`** by default. For a private subnet, set `false` + use NAT (controller/proxy still need reachable IPs for provisioners).

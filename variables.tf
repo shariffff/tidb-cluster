@@ -1,16 +1,16 @@
 variable "region" {
   description = "AWS region"
-  default     = "ap-southeast-1"
+  default     = "ap-south-1"
 }
 
 # Existing network. The subnet's AZ determines where every instance lands,
-# so point this at a subnet in ap-southeast-1a.
+# so point this at a subnet in ap-south-1a.
 variable "vpc_id" {
   description = "ID of the existing VPC to launch into"
 }
 
 variable "subnet_id" {
-  description = "ID of an existing subnet in ap-southeast-1a"
+  description = "ID of an existing subnet in ap-south-1a"
 }
 
 variable "key_name" {
@@ -34,6 +34,30 @@ variable "associate_public_ip" {
 variable "tidb_version" {
   description = "TiDB cluster version to deploy via TiUP"
   default     = "v8.5.1"
+}
+
+# Horizontal scaling knobs. Bump these and `terraform apply`: new instances are
+# created and the deploy step runs an ONLINE `tiup scale-out` for the new nodes
+# (no redeploy, no downtime). The first 3 TiDB nodes always carry PD, so
+# scaling TiDB does not change PD quorum.
+variable "tidb_count" {
+  description = "Number of TiDB SQL nodes (>=3). Scale this for more concurrent users / query capacity. PD stays pinned to the first 3 nodes."
+  default     = 3
+
+  validation {
+    condition     = var.tidb_count >= 3
+    error_message = "tidb_count must be >= 3 so the 3 colocated PD members keep quorum."
+  }
+}
+
+variable "tikv_count" {
+  description = "Number of TiKV storage nodes (>=3). Scale this for more storage throughput / capacity."
+  default     = 3
+
+  validation {
+    condition     = var.tikv_count >= 3
+    error_message = "tikv_count must be >= 3 to satisfy TiKV's default 3x replication."
+  }
 }
 
 # Instance types, defaulted to the requested production sizing.

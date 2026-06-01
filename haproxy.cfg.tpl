@@ -1,6 +1,8 @@
 global
     log /dev/log local0
-    maxconn 8192
+    # High-concurrency: cap is per-process. HAProxy sizes its fd limit from
+    # this; the systemd LimitNOFILE override (set in Terraform) backs it.
+    maxconn 100000
     daemon
 
 defaults
@@ -23,6 +25,7 @@ frontend stats
 
 frontend tidb-front
     bind *:4000
+    maxconn 100000
     default_backend tidb-back
 
 backend tidb-back

@@ -1,7 +1,7 @@
 # Copy to terraform.tfvars and fill in. Do not commit terraform.tfvars.
 
 vpc_id    = "vpc-xxxxxxxx"           # existing VPC
-subnet_id = "subnet-xxxxxxxx"        # subnet in ap-southeast-1a
+subnet_id = "subnet-xxxxxxxx"        # subnet in ap-south-1a
 
 key_name        = "my-aws-keypair"   # name of the EC2 key pair
 ssh_private_key = "~/.ssh/id_ed25519" # local private key matching it
