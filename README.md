@@ -3,14 +3,14 @@
 Terraform for a real TiDB cluster. One `apply` builds the instances, mounts TiKV NVMe, runs TiUP deploy+start, and configures HAProxy.
 
 ```bash
-cp terraform.tfvars.example terraform.tfvars   # vpc_id, subnet_id, key_name, admin_cidr
+cp terraform.tfvars.example terraform.tfvars   # key_name, admin_cidr (network is created for you)
 terraform init                                 # first run only
 terraform plan                                 # review: expect create-only
 terraform apply                                # ~10-15 min
 terraform output connect                       # mysql command via HAProxy
 ```
 
-Needs: active AWS creds, an EC2 key pair in `ap-south-1` (+ local private key), a subnet in `ap-south-1a`. Check your **G-instance vCPU quota** first — the 3× g4dn fail without it.
+Needs: active AWS creds and an EC2 key pair in `ap-south-1` (+ local private key). A dedicated VPC + public subnet in `ap-south-1a` is created by default; to use an existing network set `create_network = false` and pass `vpc_id`/`subnet_id`. Check your **G-instance vCPU quota** first — the 3× g4dn fail without it.
 
 ## Topology
 

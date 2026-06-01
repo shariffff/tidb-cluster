@@ -3,14 +3,39 @@ variable "region" {
   default     = "ap-south-1"
 }
 
-# Existing network. The subnet's AZ determines where every instance lands,
-# so point this at a subnet in ap-south-1a.
+# Networking. By default the stack creates its own VPC, subnet, internet
+# gateway, and route table (see main.tf). Set create_network = false to launch
+# into an existing network instead, in which case vpc_id and subnet_id are
+# required and the cidr/az variables below are ignored.
+variable "create_network" {
+  description = "Create a dedicated VPC + public subnet for the cluster. Set false to use an existing vpc_id/subnet_id."
+  type        = bool
+  default     = true
+}
+
 variable "vpc_id" {
-  description = "ID of the existing VPC to launch into"
+  description = "ID of an existing VPC to launch into. Required only when create_network = false."
+  default     = ""
 }
 
 variable "subnet_id" {
-  description = "ID of an existing subnet in ap-south-1a"
+  description = "ID of an existing subnet (in availability_zone) to launch into. Required only when create_network = false."
+  default     = ""
+}
+
+variable "availability_zone" {
+  description = "AZ for the created subnet (and thus every instance). Must be in var.region. Only used when create_network = true."
+  default     = "ap-south-1a"
+}
+
+variable "vpc_cidr" {
+  description = "CIDR block for the created VPC. Only used when create_network = true."
+  default     = "10.0.0.0/16"
+}
+
+variable "subnet_cidr" {
+  description = "CIDR block for the created subnet. Must sit inside vpc_cidr. Only used when create_network = true."
+  default     = "10.0.1.0/24"
 }
 
 variable "key_name" {

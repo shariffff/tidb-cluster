@@ -1,3 +1,13 @@
+output "vpc_id" {
+  description = "VPC the cluster runs in (created or existing)"
+  value       = local.vpc_id
+}
+
+output "subnet_id" {
+  description = "Subnet the cluster runs in (created or existing)"
+  value       = local.subnet_id
+}
+
 output "controller" {
   description = "Control machine (TiUP + monitoring) public IP"
   value       = aws_instance.controller.public_ip

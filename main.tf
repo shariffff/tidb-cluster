@@ -11,6 +11,59 @@ provider "aws" {
   region = var.region
 }
 
+# Optional dedicated network. When var.create_network is true these build a VPC
+# with a single public subnet wired to an internet gateway; otherwise the stack
+# uses the existing var.vpc_id / var.subnet_id. local.vpc_id and local.subnet_id
+# resolve to whichever is in effect and are used everywhere below.
+resource "aws_vpc" "tidb" {
+  count                = var.create_network ? 1 : 0
+  cidr_block           = var.vpc_cidr
+  enable_dns_support   = true
+  enable_dns_hostnames = true
+
+  tags = { Name = "tidb-cluster-vpc" }
+}
+
+resource "aws_internet_gateway" "tidb" {
+  count  = var.create_network ? 1 : 0
+  vpc_id = aws_vpc.tidb[0].id
+
+  tags = { Name = "tidb-cluster-igw" }
+}
+
+resource "aws_subnet" "tidb" {
+  count                   = var.create_network ? 1 : 0
+  vpc_id                  = aws_vpc.tidb[0].id
+  cidr_block              = var.subnet_cidr
+  availability_zone       = var.availability_zone
+  map_public_ip_on_launch = var.associate_public_ip
+
+  tags = { Name = "tidb-cluster-subnet" }
+}
+
+resource "aws_route_table" "tidb" {
+  count  = var.create_network ? 1 : 0
+  vpc_id = aws_vpc.tidb[0].id
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.tidb[0].id
+  }
+
+  tags = { Name = "tidb-cluster-rt" }
+}
+
+resource "aws_route_table_association" "tidb" {
+  count          = var.create_network ? 1 : 0
+  subnet_id      = aws_subnet.tidb[0].id
+  route_table_id = aws_route_table.tidb[0].id
+}
+
+locals {
+  vpc_id    = var.create_network ? aws_vpc.tidb[0].id : var.vpc_id
+  subnet_id = var.create_network ? aws_subnet.tidb[0].id : var.subnet_id
+}
+
 # Latest Ubuntu 24.04 LTS (amd64), resolved per-region.
 data "aws_ami" "ubuntu" {
   most_recent = true
@@ -34,7 +87,7 @@ data "aws_ami" "ubuntu" {
 resource "aws_security_group" "tidb" {
   name        = "tidb-cluster-prod"
   description = "TiDB production cluster"
-  vpc_id      = var.vpc_id
+  vpc_id      = local.vpc_id
 
   ingress {
     description = "intra-cluster"
@@ -79,7 +132,7 @@ resource "aws_security_group" "tidb" {
 locals {
   common = {
     key_name                    = var.key_name
-    subnet_id                   = var.subnet_id
+    subnet_id                   = local.subnet_id
     vpc_security_group_ids      = [aws_security_group.tidb.id]
     associate_public_ip_address = var.associate_public_ip
   }
