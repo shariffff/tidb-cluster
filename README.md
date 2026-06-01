@@ -31,6 +31,23 @@ terraform apply -var tikv_count=5    # more storage throughput
 
 Re-apply does an online `tiup scale-out` of new nodes only. PD stays pinned to the first 3 TiDB nodes; both counts floor at 3. Scale-*out* only — to remove a node, `tiup cluster scale-in` it first.
 
+## Scaling down the TiDB tier (drain first, then apply)
+
+The Terraform automation is scale-*out* only. **Do not** just lower `tidb_count` and `apply` — Terraform terminates the EC2 instances directly while the cluster still thinks they're members, and leaves HAProxy pointing at dead backends. The drain has to happen *before* `apply` (Terraform destroys the doomed boxes during the apply, so a provisioner can't drain them in time).
+
+Use the **`scale-down.sh`** helper, which `tiup cluster scale-in`s the surplus TiDB nodes on the controller, then runs `terraform apply` with the lower count:
+
+```bash
+./scale-down.sh --tidb 4          # 5 -> 4 TiDB, drained safely
+./scale-down.sh --tidb 3 --yes    # skip the confirm + auto-approve apply
+```
+
+It removes the **highest-numbered** nodes (matching Terraform's top-of-`count` destroy order), floors at 3, and never touches `db-tidb-01..03` (PD). Reaches the controller with `~/.ssh/id_ed25519` by default — override with `SSH_KEY=...`. Pass `-var tidb_count=N` on later applies (or set it in `terraform.tfvars`) so it sticks.
+
+**Manual equivalent:** SSH to the controller, `tiup cluster scale-in tidb-prod --node <ip>:4000` the highest-numbered TiDB node, then `terraform apply -var tidb_count=N`.
+
+**TiKV is out of scope** — scaling storage down means region migration: `tiup cluster scale-in` the TiKV node, wait until `tiup cluster display tidb-prod` shows it `Tombstone`, `tiup cluster prune tidb-prod`, *then* lower `tikv_count`. Terminating a TiKV node before it tombstones permanently loses that replica (data is on ephemeral NVMe). Do this by hand.
+
 ## Monitoring
 
 - **Grafana:** `terraform output grafana` (admin/admin)
