@@ -152,7 +152,7 @@ resource "aws_instance" "controller" {
     volume_type = "gp3"
   }
 
-  tags = { Name = "db-tidb-controller" }
+  tags = { Name = "tf-db-tidb-controller" }
 }
 
 # TiDB SQL nodes. PD is colocated on the FIRST THREE of these hosts only
@@ -172,7 +172,7 @@ resource "aws_instance" "tidb" {
     volume_type = "gp3"
   }
 
-  tags = { Name = format("db-tidb-%02d", count.index + 1) }
+  tags = { Name = format("tf-db-tidb-%02d", count.index + 1) }
 }
 
 # TiKV nodes on g4dn. The local NVMe instance store is formatted and mounted
@@ -209,7 +209,7 @@ resource "aws_instance" "tikv" {
     fi
   EOF
 
-  tags = { Name = format("db-tikv-%02d", count.index + 1) }
+  tags = { Name = format("tf-db-tikv-%02d", count.index + 1) }
 }
 
 # TiCDC. c5 has no local store, so the sort/staging dir lives on a larger
@@ -228,7 +228,7 @@ resource "aws_instance" "ticdc" {
     volume_type = "gp3"
   }
 
-  tags = { Name = "db-ticdc-01" }
+  tags = { Name = "tf-db-ticdc-01" }
 }
 
 # HAProxy load balancer in front of the TiDB SQL nodes.
@@ -246,7 +246,7 @@ resource "aws_instance" "proxy" {
     volume_type = "gp3"
   }
 
-  tags = { Name = "db-proxy-01" }
+  tags = { Name = "tf-db-proxy-01" }
 }
 
 # Deploy + start TiDB via TiUP from the controller. The controller SSHes to
