@@ -74,15 +74,6 @@ variable "security_group_ids" {
   default     = []
 }
 
-variable "_validate_sg_selection" {
-  description = "Internal: validate that when create_security_group is false, user provided security_group_ids." 
-  default     = null
-  validation {
-    condition = var.create_security_group || length(var.security_group_ids) > 0
-    error_message = "If create_security_group is false you must provide at least one security group id in security_group_ids."
-  }
-}
-
 variable "tidb_version" {
   description = "TiDB cluster version to deploy via TiUP"
   default     = "v8.5.1"
