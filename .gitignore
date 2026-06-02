@@ -10,3 +10,8 @@ crash.*.log
 !*.tfvars.example
 
 # .terraform.lock.hcl is intentionally tracked (it pins provider versions).
+
+# keys
+*.pem
+*.key
+*.crt

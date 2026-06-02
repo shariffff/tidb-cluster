@@ -56,6 +56,12 @@ variable "associate_public_ip" {
   default     = true
 }
 
+variable "use_private_provisioning" {
+  description = "When true, Terraform provisioners connect to instances using their private IPs. The machine running Terraform must be able to reach those private IPs (bastion, VPN, or run Terraform from inside the VPC)."
+  type        = bool
+  default     = false
+}
+
 variable "tidb_version" {
   description = "TiDB cluster version to deploy via TiUP"
   default     = "v8.5.1"

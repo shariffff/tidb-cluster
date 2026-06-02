@@ -270,7 +270,7 @@ resource "null_resource" "deploy" {
 
   connection {
     type        = "ssh"
-    host        = aws_instance.controller.public_ip
+    host        = var.use_private_provisioning ? aws_instance.controller.private_ip : aws_instance.controller.public_ip
     user        = "ubuntu"
     private_key = file(pathexpand(var.ssh_private_key))
     timeout     = "5m"
@@ -329,7 +329,7 @@ resource "null_resource" "proxy_setup" {
 
   connection {
     type        = "ssh"
-    host        = aws_instance.proxy[0].public_ip
+    host        = var.use_private_provisioning ? aws_instance.proxy[0].private_ip : aws_instance.proxy[0].public_ip
     user        = "ubuntu"
     private_key = file(pathexpand(var.ssh_private_key))
     timeout     = "5m"
