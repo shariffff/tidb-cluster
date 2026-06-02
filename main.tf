@@ -85,6 +85,7 @@ data "aws_ami" "ubuntu" {
 # monitoring 9090/9100/3000, HAProxy -> TiDB). Only SSH, the load-balanced
 # MySQL port, and Grafana are exposed to the admin CIDR.
 resource "aws_security_group" "tidb" {
+  count = var.create_security_group ? 1 : 0
   name        = "tidb-cluster-prod"
   description = "TiDB production cluster"
   vpc_id      = local.vpc_id
@@ -133,7 +134,7 @@ locals {
   common = {
     key_name                    = var.key_name
     subnet_id                   = local.subnet_id
-    vpc_security_group_ids      = [aws_security_group.tidb.id]
+    vpc_security_group_ids      = length(var.security_group_ids) > 0 ? var.security_group_ids : (var.create_security_group ? [aws_security_group.tidb[0].id] : var.security_group_ids)
     associate_public_ip_address = var.associate_public_ip
   }
 }

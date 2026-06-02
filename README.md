@@ -35,6 +35,28 @@ Requirements for an existing subnet:
 - **Outbound internet** at deploy time (instances install TiUP/HAProxy). Use a **public** subnet with an internet gateway and keep `associate_public_ip = true` (default), or a **private** subnet behind a NAT gateway with `associate_public_ip = false`.
 - **The controller and proxy need reachable public IPs** for Terraform's SSH provisioners. A private-only subnet leaves those empty and the deploy/proxy steps fail to connect — prefer a public subnet with `associate_public_ip = true`.
 
+## Using existing security groups & private provisioning
+
+You can keep your existing AWS security groups and run the cluster into a private subnet without Terraform creating or modifying SG rules.
+
+- To prevent Terraform creating a security group, set in `terraform.tfvars`:
+
+```hcl
+create_security_group = false
+security_group_ids = ["sg-0123456789abcdef0"]
+```
+
+- To avoid assigning public IPs to instances and have Terraform connect over private IPs, set:
+
+```hcl
+associate_public_ip = false
+use_private_provisioning = true
+```
+
+When `use_private_provisioning = true` the machine running `terraform apply` must be able to reach instance private IPs (run Terraform from an EC2 in the VPC, via a bastion host with SSH jump, or over a VPN). If you cannot reach private IPs, either temporarily allow public IPs for the controller/proxy or run the post-launch TiUP/HAProxy steps manually from a machine inside the VPC.
+
+Run `terraform plan` after changing these values and confirm the plan does not create or modify security groups.
+
 ## Topology
 
 | Instance | Type | Role |

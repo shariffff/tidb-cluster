@@ -16,5 +16,18 @@ admin_cidr = "203.0.113.10/32"       # your public IP /32 (SSH, :4000, Grafana)
 # vpc_id         = "vpc-xxxxxxxx"      # existing VPC
 # subnet_id      = "subnet-xxxxxxxx"   # subnet in availability_zone
 
+# To use an existing security group instead of letting Terraform create one
+# (recommended if you already manage SGs in AWS):
+# create_security_group = false
+# security_group_ids = ["sg-0123456789abcdef0"]
+
+# If you're launching into a private subnet and don't want public IPs:
+# associate_public_ip = false
+# use_private_provisioning = true
+# Note: when `use_private_provisioning = true` the machine running Terraform
+# must be able to reach instance private IPs (run Terraform from a bastion,
+# VPN, or an EC2 inside the VPC). Alternatively, give the controller/proxy
+# temporary public IPs so Terraform can run the provisioners.
+
 # region, tidb_version, instance types, and associate_public_ip all have
 # sensible defaults in variables.tf — override here only if needed.

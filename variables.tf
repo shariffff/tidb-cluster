@@ -62,6 +62,27 @@ variable "use_private_provisioning" {
   default     = false
 }
 
+variable "create_security_group" {
+  description = "When true the module creates a dedicated security group. Set false to use existing security group IDs provided in security_group_ids."
+  type        = bool
+  default     = true
+}
+
+variable "security_group_ids" {
+  description = "List of existing security group IDs to attach to instances. When non-empty, these will be used instead of creating a new security group."
+  type        = list(string)
+  default     = []
+}
+
+variable "_validate_sg_selection" {
+  description = "Internal: validate that when create_security_group is false, user provided security_group_ids." 
+  default     = null
+  validation {
+    condition = var.create_security_group || length(var.security_group_ids) > 0
+    error_message = "If create_security_group is false you must provide at least one security group id in security_group_ids."
+  }
+}
+
 variable "tidb_version" {
   description = "TiDB cluster version to deploy via TiUP"
   default     = "v8.5.1"
