@@ -1,0 +1,25 @@
+# Existing cluster — read-only inputs. Terraform never creates or modifies these.
+region                = "ap-south-1"
+existing_cluster_name = "tidb-prod"          # `tiup cluster list` on the controller
+controller_host       = "10.0.1.10"          # reachable IP/DNS of the EXISTING TiUP controller
+controller_user       = "ubuntu"
+ssh_private_key       = "~/.ssh/id_ed25519"  # key that can SSH into the controller
+
+# Placement for NEW nodes — reuse the existing cluster's network so PD/controller
+# can reach them. These are IDs of EXISTING resources (attached, never managed).
+subnet_id          = "subnet-0abc123..."             # same VPC as the existing cluster
+security_group_ids = ["sg-0123456789abcdef0"]        # must allow intra-cluster + SSH from controller
+key_name           = "tidb-prod-key"                 # AWS EC2 key pair NAME the existing cluster launched with (not "tidb-key")
+
+# Optional
+associate_public_ip = false                          # controller reaches nodes over private IPs
+# ami               = "ami-0123..."                   # pin to the existing cluster's image if needed
+
+# Scaling knobs — bump and `terraform apply` to scale OUT. To scale DOWN use
+# ./scale-down.sh (drains first); never just lower these and apply.
+tidb_extra_count = 0
+tikv_extra_count = 0
+
+# Match the existing tier for uniform performance.
+tidb_instance_type = "c5.4xlarge"
+tikv_instance_type = "g4dn.4xlarge"
